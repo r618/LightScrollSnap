@@ -26,9 +26,12 @@ namespace LightScrollSnap
         private float snapDelayDuration = 0.15f;
 
         [SerializeField] private float snapDistanceThreshold = 0.001f;
-
-        [Header("Effect Settings")] [SerializeField]
-        private List<BaseScrollSnapEffect> effects;
+        /// <summary>
+        /// made public so effect(s) such as ScaleEfect can be added/removed dynamically:
+        /// while moving (e.g. sliding to screen) displacement in OnItemUpdated seems to be alternating between some extremes only resulting in flickering for ScaleEffect
+        /// </summary>
+        [Header("Effect Settings")]
+        public List<BaseScrollSnapEffect> effects;
 
         #endregion
 
