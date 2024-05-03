@@ -62,6 +62,7 @@ namespace LightScrollSnap
         [Header("Unity Events")] public UnityEvent<RectTransform, int> OnItemSelected;
         public UnityEvent<RectTransform, int> OnItemDeSelected;
         public UnityEvent<int, RectTransform> OnItemClicked;
+        public UnityEvent<int, RectTransform> OnItemDown;
 
         #endregion
 
@@ -126,6 +127,9 @@ namespace LightScrollSnap
                 var index = i;
                 clickHandler.AddClickListener(() => OnAnyItemClicked(index, item));
                 _itemClickHandlers.Add(clickHandler);
+
+                var downHandler = item.gameObject.AddComponent<ScrollItemDownHandler>();
+                downHandler.AddDownListener(() => OnAnyItemDown(index, item));
             }
         }
 
@@ -134,6 +138,11 @@ namespace LightScrollSnap
             OnItemClicked?.Invoke(index, item);
             if (autoScrollToClickedItem)
                 SmoothScrollToItem(index);
+        }
+
+        private void OnAnyItemDown(int index, RectTransform item)
+        {
+            OnItemDown?.Invoke(index, item);
         }
 
         private void OnInitialPosChanged()
