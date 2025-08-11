@@ -15,15 +15,17 @@ namespace LightScrollSnap
 
         [SerializeField] private DeltaTimeMode deltaTimeMode = DeltaTimeMode.Unscaled;
 
-        [Header("Scroll Settings")] [SerializeField]
+        [Header("Scroll Settings")]
+        [SerializeField]
         private Scrollbar scrollbar;
 
-        [SerializeField] [Range(0, 1)] private float initialPos;
+        [SerializeField][Range(0, 1)] private float initialPos;
         public bool autoScrollToClickedItem = true;
         public float smoothScrollDuration = 0.35f;
         public float smoothSnapDuration = 0.25f;
 
-        [Header("Snap Settings")] [SerializeField]
+        [Header("Snap Settings")]
+        [SerializeField]
         private float snapDelayDuration = 0.15f;
 
         [SerializeField] private float snapDistanceThreshold = 0.001f;
@@ -171,7 +173,7 @@ namespace LightScrollSnap
             _scrollPos = scrollbar.value;
             UpdateNearest();
 
-            var leftMouseButtonPressed = MouseButtonPressed(MouseButton.LeftMouse);
+            var leftMouseButtonPressed = InputHelper.MouseButtonPressed(MouseButton.LeftMouse);
             if (leftMouseButtonPressed)
             {
                 ClearSmoothScrolling();
@@ -182,32 +184,6 @@ namespace LightScrollSnap
 
             HandleItemsStates();
             ApplyEffects();
-        }
-
-        private bool MouseButtonPressed(MouseButton button) {
-#if ENABLE_INPUT_SYSTEM
-            switch (button) {
-                case MouseButton.LeftMouse:
-                    return UnityEngine.InputSystem.Mouse.current.leftButton.isPressed;
-                case MouseButton.RightMouse:
-                    return UnityEngine.InputSystem.Mouse.current.rightButton.isPressed;
-                case MouseButton.MiddleMouse:
-                    return UnityEngine.InputSystem.Mouse.current.middleButton.isPressed;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(button), button, $"Unsupported mouse button: {button}");
-            }
-#else
-            switch (button) {
-                case MouseButton.LeftMouse:
-                    return Input.GetMouseButton(0);
-                case MouseButton.RightMouse:
-                    return Input.GetMouseButton(1);
-                case MouseButton.MiddleMouse:
-                    return Input.GetMouseButton(2);
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(button), button, $"Unsupported mouse button: {button}");
-            }
-#endif
         }
 
         private void UpdateItemsIfChanged()
