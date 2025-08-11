@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
+using UnityEngine.UIElements;
 
 namespace LightScrollSnap
 {
@@ -14,20 +15,23 @@ namespace LightScrollSnap
 
         [SerializeField] private DeltaTimeMode deltaTimeMode = DeltaTimeMode.Unscaled;
 
-        [Header("Scroll Settings")] [SerializeField]
+        [Header("Scroll Settings")]
+        [SerializeField]
         private Scrollbar scrollbar;
 
-        [SerializeField] [Range(0, 1)] private float initialPos;
+        [SerializeField][Range(0, 1)] private float initialPos;
         public bool autoScrollToClickedItem = true;
         public float smoothScrollDuration = 0.35f;
         public float smoothSnapDuration = 0.25f;
 
-        [Header("Snap Settings")] [SerializeField]
+        [Header("Snap Settings")]
+        [SerializeField]
         private float snapDelayDuration = 0.15f;
 
         [SerializeField] private float snapDistanceThreshold = 0.001f;
 
-        [Header("Effect Settings")] [SerializeField]
+        [Header("Effect Settings")]
+        [SerializeField]
         private List<BaseScrollSnapEffect> effects;
 
         #endregion
@@ -157,7 +161,9 @@ namespace LightScrollSnap
 
             _scrollPos = scrollbar.value;
             UpdateNearest();
-            if (Input.GetMouseButton(0))
+
+            var leftMouseButtonPressed = InputHelper.MouseButtonPressed(MouseButton.LeftMouse);
+            if (leftMouseButtonPressed)
             {
                 ClearSmoothScrolling();
                 _snapping = false;
