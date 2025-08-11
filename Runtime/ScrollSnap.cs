@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
+using UnityEngine.UIElements;
 
 namespace LightScrollSnap
 {
@@ -169,7 +170,9 @@ namespace LightScrollSnap
 
             _scrollPos = scrollbar.value;
             UpdateNearest();
-            if (Input.GetMouseButton(0))
+
+            var leftMouseButtonPressed = MouseButtonPressed(MouseButton.LeftMouse);
+            if (leftMouseButtonPressed)
             {
                 ClearSmoothScrolling();
                 _snapping = false;
@@ -179,6 +182,32 @@ namespace LightScrollSnap
 
             HandleItemsStates();
             ApplyEffects();
+        }
+
+        private bool MouseButtonPressed(MouseButton button) {
+#if ENABLE_INPUT_SYSTEM
+            switch (button) {
+                case MouseButton.LeftMouse:
+                    return UnityEngine.InputSystem.Mouse.current.leftButton.isPressed;
+                case MouseButton.RightMouse:
+                    return UnityEngine.InputSystem.Mouse.current.rightButton.isPressed;
+                case MouseButton.MiddleMouse:
+                    return UnityEngine.InputSystem.Mouse.current.middleButton.isPressed;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(button), button, $"Unsupported mouse button: {button}");
+            }
+#else
+            switch (button) {
+                case MouseButton.LeftMouse:
+                    return Input.GetMouseButton(0);
+                case MouseButton.RightMouse:
+                    return Input.GetMouseButton(1);
+                case MouseButton.MiddleMouse:
+                    return Input.GetMouseButton(2);
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(button), button, $"Unsupported mouse button: {button}");
+            }
+#endif
         }
 
         private void UpdateItemsIfChanged()
