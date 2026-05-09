@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -23,6 +23,11 @@ namespace LightScrollSnap
         public bool autoScrollToClickedItem = true;
         public float smoothScrollDuration = 0.35f;
         public float smoothSnapDuration = 0.25f;
+
+        [Header("Hold Button Settings")]
+        public bool enableHoldButtonScroll = true;
+        [Range(0.2f, 20f)] public float holdItemsPerSecond = 2.5f;
+        [Range(0f, 0.5f)] public float holdSuppressClickAfterSeconds = 0.08f;
 
         [Header("Snap Settings")]
         [SerializeField]
@@ -51,6 +56,8 @@ namespace LightScrollSnap
         private float DeltaTime => deltaTimeMode == DeltaTimeMode.Scaled ? Time.deltaTime : Time.unscaledDeltaTime;
         private ScrollRect _scrollRect;
         private bool _snapping;
+        private bool _externalPointerPressed;
+        private bool _holdButtonScrollEnabled;
         private bool Snapped => Mathf.Abs(_nearestPos - scrollbar.value) <= snapDistanceThreshold;
         private List<RectTransform> _items;
         private List<ScrollItemClickHandler> _itemClickHandlers;
@@ -102,6 +109,7 @@ namespace LightScrollSnap
         {
             _scrollRect = GetComponent<ScrollRect>();
             SetupItems();
+            SetupHoldButtons();
         }
 
         private void SetupItems()
@@ -174,7 +182,7 @@ namespace LightScrollSnap
             UpdateNearest();
 
             var leftMouseButtonPressed = InputHelper.MouseButtonPressed(MouseButton.LeftMouse);
-            if (leftMouseButtonPressed)
+            if (leftMouseButtonPressed || _externalPointerPressed)
             {
                 ClearSmoothScrolling();
                 _snapping = false;
@@ -327,6 +335,46 @@ namespace LightScrollSnap
                 StopCoroutine(_snapToNearestCoroutine);
         }
 
+        private void SetupHoldButtons()
+        {
+            if (_holdButtonScrollEnabled || !enableHoldButtonScroll)
+                return;
+
+            UnityEngine.UI.Button[] buttons;
+#if UNITY_2022_2_OR_NEWER
+            buttons = FindObjectsByType<UnityEngine.UI.Button>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            buttons = FindObjectsOfType<UnityEngine.UI.Button>(true);
+#endif
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                var button = buttons[i];
+                var listenerCount = button.onClick.GetPersistentEventCount();
+                for (int j = 0; j < listenerCount; j++)
+                {
+                    var target = button.onClick.GetPersistentTarget(j);
+                    if (target != this)
+                        continue;
+
+                    var method = button.onClick.GetPersistentMethodName(j);
+                    int direction = 0;
+                    if (method == nameof(SmoothScrollToNextItem))
+                        direction = 1;
+                    else if (method == nameof(SmoothScrollToPreviousItem))
+                        direction = -1;
+
+                    if (direction == 0)
+                        continue;
+
+                    var hold = button.GetComponent<ScrollSnapHoldButton>();
+                    if (hold == null)
+                        hold = button.gameObject.AddComponent<ScrollSnapHoldButton>();
+                    hold.Configure(this, direction, holdItemsPerSecond, holdSuppressClickAfterSeconds);
+                    _holdButtonScrollEnabled = true;
+                }
+            }
+        }
+
         private bool IsIndexInRange(int index) => index >= 0 && index <= _items.Count - 1;
 
         #endregion
@@ -384,6 +432,27 @@ namespace LightScrollSnap
             _smoothScrolling = false;
             if (_smoothScrollingCoroutine != null)
                 StopCoroutine(_smoothScrollingCoroutine);
+        }
+
+        public void SetExternalPointerPressed(bool pressed)
+        {
+            _externalPointerPressed = pressed;
+            if (!pressed && _scrollRect != null)
+                _scrollRect.velocity = Vector2.zero;
+        }
+
+        public void HoldScrollByItems(float itemDelta)
+        {
+            if (_items == null || _items.Count == 0)
+                return;
+
+            ClearSmoothScrolling();
+            ClearSnapping();
+
+            var normalizedDelta = _distance * itemDelta;
+            scrollbar.value = Mathf.Clamp01(scrollbar.value + normalizedDelta);
+            if (_scrollRect != null)
+                _scrollRect.velocity = Vector2.zero;
         }
 
         public float GetScrollPositionOfItem(int itemIndex) => _posses[itemIndex];
