@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
@@ -5,71 +6,96 @@ namespace LightScrollSnap
 {
     /// <summary>
     /// Pointer hold support for ScrollSnap navigation buttons.
-    /// Keeps movement active while pointer is down and stops immediately on release.
+    /// Steps one item at a time while the pointer is down and stops immediately on release; the pace is
+    /// ScrollSnap's holdRepeatInterval, which also gates the button's own click so the two cannot stack.
     /// </summary>
     public class ScrollSnapHoldButton : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
     {
         [SerializeField] private ScrollSnap scrollSnap;
         [SerializeField] private int direction = 1; // +1 next, -1 previous
-        [SerializeField] private float itemsPerSecond = 2.5f;
         [SerializeField] private float suppressClickAfterHoldSeconds = 0.08f;
 
-        bool held;
+        /// <summary>
+        /// Held per pointer id, so a synthetic pointer releasing does not cancel a hold that another
+        /// pointer (real mouse, second touch) is still driving.
+        /// </summary>
+        readonly HashSet<int> heldPointers = new HashSet<int>();
         float holdStartedAt;
 
-        public void Configure(ScrollSnap snap, int dir, float itemRate, float suppressClickAfterSeconds)
+        bool Held => heldPointers.Count > 0;
+
+        public void Configure(ScrollSnap snap, int dir, float suppressClickAfterSeconds)
         {
             scrollSnap = snap;
             direction = dir >= 0 ? 1 : -1;
-            itemsPerSecond = Mathf.Max(0.2f, itemRate);
             suppressClickAfterHoldSeconds = Mathf.Max(0f, suppressClickAfterSeconds);
         }
 
         void Update()
         {
-            if (!held || scrollSnap == null)
+            if (!Held || scrollSnap == null)
                 return;
 
-            scrollSnap.HoldScrollByItems(direction * itemsPerSecond * Time.unscaledDeltaTime);
+            scrollSnap.HoldScrollToAdjacentItem(direction);
         }
 
-        void Release()
+        void Release(int pointerId)
         {
-            if (!held)
+            if (!heldPointers.Remove(pointerId) || Held)
                 return;
 
-            held = false;
+            if (scrollSnap != null)
+                scrollSnap.SetExternalPointerPressed(false);
+        }
+
+        void ReleaseAll()
+        {
+            if (!Held)
+                return;
+
+            heldPointers.Clear();
             if (scrollSnap != null)
                 scrollSnap.SetExternalPointerPressed(false);
         }
 
         public void OnPointerDown(PointerEventData eventData)
         {
-            if (scrollSnap == null)
+            if (scrollSnap == null || eventData == null)
                 return;
 
-            held = true;
-            holdStartedAt = Time.unscaledTime;
+            if (!Held)
+                holdStartedAt = Time.unscaledTime;
+
+            heldPointers.Add(eventData.pointerId);
             scrollSnap.SetExternalPointerPressed(true);
         }
 
         public void OnPointerUp(PointerEventData eventData)
         {
-            var heldDuration = Time.unscaledTime - holdStartedAt;
-            if (eventData != null && heldDuration >= suppressClickAfterHoldSeconds)
+            if (eventData == null)
+            {
+                ReleaseAll();
+                return;
+            }
+
+            if (Time.unscaledTime - holdStartedAt >= suppressClickAfterHoldSeconds)
                 eventData.eligibleForClick = false;
 
-            Release();
+            Release(eventData.pointerId);
         }
 
         public void OnPointerExit(PointerEventData eventData)
         {
-            if (eventData != null)
-                eventData.eligibleForClick = false;
+            if (eventData == null)
+            {
+                ReleaseAll();
+                return;
+            }
 
-            Release();
+            eventData.eligibleForClick = false;
+            Release(eventData.pointerId);
         }
 
-        void OnDisable() => Release();
+        void OnDisable() => ReleaseAll();
     }
 }

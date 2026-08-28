@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -26,7 +27,16 @@ namespace LightScrollSnap
 
         [Header("Hold Button Settings")]
         public bool enableHoldButtonScroll = true;
-        [Range(0.2f, 20f)] public float holdItemsPerSecond = 2.5f;
+        /// <summary>
+        /// Seconds between two item scrolls while a navigation button is held down. Also gates the click
+        /// the button itself fires, so holding advances one item per interval no matter which of the two
+        /// asks for it.
+        /// </summary>
+        [Range(0.05f, 5f)] public float holdRepeatInterval = 1f;
+        /// <summary>
+        /// Whether a held button jumps to the other end once it runs out of items.
+        /// </summary>
+        public bool holdWrapAround = true;
         [Range(0f, 0.5f)] public float holdSuppressClickAfterSeconds = 0.08f;
 
         [Header("Snap Settings")]
@@ -58,6 +68,17 @@ namespace LightScrollSnap
         private bool _snapping;
         private bool _externalPointerPressed;
         private bool _holdButtonScrollEnabled;
+        private bool _holdScrolling;
+        private float _holdReleasedAt = float.NegativeInfinity;
+        private float _lastItemScrollAt = float.NegativeInfinity;
+        /// <summary>
+        /// A held button asks for a step every frame and fires a click of its own on release; both go
+        /// through here, so only the first one per <see cref="holdRepeatInterval"/> moves the list.
+        /// The grace period covers the click, which arrives just after the pointer is released.
+        /// </summary>
+        private bool HoldRepeatBlocked => (_externalPointerPressed || Time.unscaledTime - _holdReleasedAt < holdReleaseClickGrace)
+                                          && Time.unscaledTime - _lastItemScrollAt < holdRepeatInterval;
+        private const float holdReleaseClickGrace = 0.2f;
         private bool Snapped => Mathf.Abs(_nearestPos - scrollbar.value) <= snapDistanceThreshold;
         private List<RectTransform> _items;
         private List<ScrollItemClickHandler> _itemClickHandlers;
@@ -182,7 +203,8 @@ namespace LightScrollSnap
             UpdateNearest();
 
             var leftMouseButtonPressed = InputHelper.MouseButtonPressed(MouseButton.LeftMouse);
-            if (leftMouseButtonPressed || _externalPointerPressed)
+            // a hold driven scroll is allowed to finish - it is the pointer being down that started it
+            if ((leftMouseButtonPressed || _externalPointerPressed) && !_holdScrolling)
             {
                 ClearSmoothScrolling();
                 _snapping = false;
@@ -270,6 +292,7 @@ namespace LightScrollSnap
         private void OnSmoothScrollEnded()
         {
             _snapping = false;
+            _holdScrolling = false;
         }
 
         private void HandleItemsStates()
@@ -335,44 +358,84 @@ namespace LightScrollSnap
                 StopCoroutine(_snapToNearestCoroutine);
         }
 
+        /// <summary>
+        /// Attaches <see cref="ScrollSnapHoldButton"/> to whatever component drives navigation, by looking
+        /// for a UnityEvent whose persistent calls point back at this ScrollSnap. Not restricted to
+        /// UnityEngine.UI.Button - custom buttons (Lean.Gui.LeanButton and friends) have their own click
+        /// event field and would otherwise never get hold support.
+        /// </summary>
         private void SetupHoldButtons()
         {
             if (_holdButtonScrollEnabled || !enableHoldButtonScroll)
                 return;
 
-            UnityEngine.UI.Button[] buttons;
+            MonoBehaviour[] behaviours;
 #if UNITY_2022_2_OR_NEWER
-            buttons = FindObjectsByType<UnityEngine.UI.Button>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            behaviours = FindObjectsByType<MonoBehaviour>(FindObjectsInactive.Include, FindObjectsSortMode.None);
 #else
-            buttons = FindObjectsOfType<UnityEngine.UI.Button>(true);
+            behaviours = FindObjectsOfType<MonoBehaviour>(true);
 #endif
-            for (int i = 0; i < buttons.Length; i++)
+            var events = new List<UnityEventBase>(4);
+
+            for (int i = 0; i < behaviours.Length; i++)
             {
-                var button = buttons[i];
-                var listenerCount = button.onClick.GetPersistentEventCount();
-                for (int j = 0; j < listenerCount; j++)
+                var behaviour = behaviours[i];
+                if (behaviour == null || behaviour == this)
+                    continue;
+
+                CollectEvents(behaviour, events);
+
+                for (int j = 0; j < events.Count; j++)
                 {
-                    var target = button.onClick.GetPersistentTarget(j);
-                    if (target != this)
-                        continue;
-
-                    var method = button.onClick.GetPersistentMethodName(j);
-                    int direction = 0;
-                    if (method == nameof(SmoothScrollToNextItem))
-                        direction = 1;
-                    else if (method == nameof(SmoothScrollToPreviousItem))
-                        direction = -1;
-
+                    var direction = GetHoldDirection(events[j]);
                     if (direction == 0)
                         continue;
 
-                    var hold = button.GetComponent<ScrollSnapHoldButton>();
+                    var hold = behaviour.GetComponent<ScrollSnapHoldButton>();
                     if (hold == null)
-                        hold = button.gameObject.AddComponent<ScrollSnapHoldButton>();
-                    hold.Configure(this, direction, holdItemsPerSecond, holdSuppressClickAfterSeconds);
+                        hold = behaviour.gameObject.AddComponent<ScrollSnapHoldButton>();
+                    hold.Configure(this, direction, holdSuppressClickAfterSeconds);
                     _holdButtonScrollEnabled = true;
+                    break;
                 }
             }
+        }
+
+        private void CollectEvents(MonoBehaviour behaviour, List<UnityEventBase> into)
+        {
+            into.Clear();
+
+            for (var type = behaviour.GetType(); type != null && type != typeof(MonoBehaviour); type = type.BaseType)
+            {
+                var fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    if (!typeof(UnityEventBase).IsAssignableFrom(fields[i].FieldType))
+                        continue;
+
+                    var unityEvent = fields[i].GetValue(behaviour) as UnityEventBase;
+                    if (unityEvent != null)
+                        into.Add(unityEvent);
+                }
+            }
+        }
+
+        private int GetHoldDirection(UnityEventBase unityEvent)
+        {
+            var count = unityEvent.GetPersistentEventCount();
+            for (int i = 0; i < count; i++)
+            {
+                if (unityEvent.GetPersistentTarget(i) != this)
+                    continue;
+
+                var method = unityEvent.GetPersistentMethodName(i);
+                if (method == nameof(SmoothScrollToNextItem) || method == nameof(ScrollToNextItem))
+                    return 1;
+                if (method == nameof(SmoothScrollToPreviousItem) || method == nameof(ScrollToPreviousItem))
+                    return -1;
+            }
+
+            return 0;
         }
 
         private bool IsIndexInRange(int index) => index >= 0 && index <= _items.Count - 1;
@@ -398,20 +461,48 @@ namespace LightScrollSnap
 
         public void ScrollToItem(int itemIndex)
         {
-            if (IsIndexInRange(itemIndex))
-                ScrollTo(_posses[itemIndex]);
+            if (HoldRepeatBlocked || !IsIndexInRange(itemIndex))
+                return;
+
+            _lastItemScrollAt = Time.unscaledTime;
+            ScrollTo(_posses[itemIndex]);
         }
 
         public void SmoothScrollToItem(int itemIndex, float duration)
         {
-            if (IsIndexInRange(itemIndex))
-                SmoothScrollTo(_posses[itemIndex], duration);
+            if (HoldRepeatBlocked || !IsIndexInRange(itemIndex))
+                return;
+
+            _lastItemScrollAt = Time.unscaledTime;
+            SmoothScrollTo(_posses[itemIndex], duration);
         }
 
         public void SmoothScrollToItem(int itemIndex)
         {
-            if (IsIndexInRange(itemIndex))
-                SmoothScrollTo(_posses[itemIndex], smoothScrollDuration);
+            SmoothScrollToItem(itemIndex, smoothScrollDuration);
+        }
+
+        /// <summary>
+        /// One step of a held navigation button: scrolls to the neighbouring item, or does nothing while
+        /// the previous step is still inside <see cref="holdRepeatInterval"/>.
+        /// </summary>
+        public void HoldScrollToAdjacentItem(int direction)
+        {
+            if (!HasItem || HoldRepeatBlocked)
+                return;
+
+            var itemIndex = _selectedItemIndex + (direction >= 0 ? 1 : -1);
+            if (!IsIndexInRange(itemIndex))
+            {
+                if (!holdWrapAround)
+                    return;
+
+                itemIndex = itemIndex < 0 ? _items.Count - 1 : 0;
+            }
+
+            _lastItemScrollAt = Time.unscaledTime;
+            SmoothScrollTo(_posses[itemIndex], smoothScrollDuration);
+            _holdScrolling = true;
         }
 
         public void SmoothScrollTo(float ratio, float seconds)
@@ -430,29 +521,25 @@ namespace LightScrollSnap
         public void ClearSmoothScrolling()
         {
             _smoothScrolling = false;
+            _holdScrolling = false;
             if (_smoothScrollingCoroutine != null)
                 StopCoroutine(_smoothScrollingCoroutine);
         }
 
         public void SetExternalPointerPressed(bool pressed)
         {
+            // a press that starts well after the previous one was released is a new click, not the next
+            // repeat of a hold, so it is never held back by the interval
+            if (pressed && !_externalPointerPressed && Time.unscaledTime - _holdReleasedAt > holdReleaseClickGrace)
+                _lastItemScrollAt = float.NegativeInfinity;
+
             _externalPointerPressed = pressed;
-            if (!pressed && _scrollRect != null)
-                _scrollRect.velocity = Vector2.zero;
-        }
-
-        public void HoldScrollByItems(float itemDelta)
-        {
-            if (_items == null || _items.Count == 0)
-                return;
-
-            ClearSmoothScrolling();
-            ClearSnapping();
-
-            var normalizedDelta = _distance * itemDelta;
-            scrollbar.value = Mathf.Clamp01(scrollbar.value + normalizedDelta);
-            if (_scrollRect != null)
-                _scrollRect.velocity = Vector2.zero;
+            if (!pressed)
+            {
+                _holdReleasedAt = Time.unscaledTime;
+                if (_scrollRect != null)
+                    _scrollRect.velocity = Vector2.zero;
+            }
         }
 
         public float GetScrollPositionOfItem(int itemIndex) => _posses[itemIndex];
